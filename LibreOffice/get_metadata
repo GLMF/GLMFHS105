@@ -1,0 +1,66 @@
+#!/bin/bash
+
+set -eo pipefail
+
+
+usage() {
+    if [ "${1}" == "help" ]; then
+        echo 'Usage: get_metadata <filename>'
+        echo "       Affiche les méta-données d'un fichier LibreOffice Writer"
+        echo '       <filename> (extension .odt).'
+        exit 0
+    fi
+}
+
+
+# Affichage des méta-données
+# ${1} : nom du fichier ini
+displayMetadata() {
+    printf "%-20s %-50s\n" "Nom" "Valeur"
+    exec 5< "${1}"
+    while read <&5 line; do
+        local name=$(echo "${line}" | cut -d= -f1)
+        local value=$(echo "${line}" | cut -d= -f2)
+        printf "%-20s %-50s\n" "${name}" "${value}"
+    done
+    exec 5<&-
+}
+
+
+# Récupération des méta-données
+# ${1} : nom du fichier odt
+getMetadata() {
+    # Création du répertoire temporaire
+    local tmp_dir=$(mktemp -d -t get-metadata-XXXXXXXX)
+
+    # Programmation de la destruction du répertoire temporaire
+    # en sortie du script
+    trap "rm -rf ${tmp_dir}" EXIT
+
+    # Décompression du fichier odt
+    unzip "${1}" -d "${tmp_dir}" > /dev/null 2>&1
+
+    if [ -f "${tmp_dir}"/.meta.ini ]; then
+        displayMetadata "${tmp_dir}"/.meta.ini
+    else
+        echo "Error : No metadata file in ${1}" 1>&2
+        exit 1
+    fi
+}
+
+
+if [ "${#}" -eq 1 ]; then
+    if [ -f "${1}" ]; then
+        if [ "${1##*.}" == 'odt' ]; then
+            getMetadata "${1}"
+        else
+            echo 'Error : You MUST use a LibreOffice Writer file with .odt extension' 1>&2
+            exit 1
+        fi
+    else
+        echo "Error : File ${1} not found or not a regular file" 1>&2
+        exit 1
+    fi
+else
+    usage 'help'
+fi

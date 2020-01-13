@@ -1,0 +1,116 @@
+#!/bin/bash
+
+set -eo pipefail
+
+
+usage() {
+    if [ "${1}" == "help" ]; then
+        echo 'Usage: add_metadata <filename> [fields]'
+        echo '       Ajoute un fichier de méta-données au fichier LibreOffice Writer'
+        echo '       <filename> (extension .odt).'
+        echo '       [fields] est un fichier optionnel indiquant la structuration du fichier'
+        echo "       .meta.ini à ajouter. Par défaut c'est le fichier data/add_metadata/iniFile.ini"
+        echo '       qui sera utilisé.'
+        exit 0
+    fi
+}
+
+
+# Vérification de la présence de métadonnées
+# ${1} : répertoire temporaire d'extraction
+existsMeta() {
+    grep 'manifest:full-path=".meta.ini"' "${1}"/META-INF/manifest.xml > /dev/null 2>&1
+    return ${?}
+}
+
+
+# Création du fichier ini
+# ${1} : nom du fichier ini de sortie
+# ${2} : nom du fichier de structuration
+createIni() {
+    exec 5< "${2}"
+    while read <&5 line; do
+        local name=$(echo "${line}" | cut -d= -f1)
+        local text=$(echo "${line}" | cut -d= -f2)
+        local userInput=''
+        read -p "${text} : " userInput
+        echo "${name}=${userInput}" >> "${1}"
+    done
+    exec 5<&-
+}
+
+
+# Ajout du fichier de méta-données
+# ${1} : nom du fichier odt
+# ${2} : chemin vers le fichier de structuration
+addMetadata() {
+    local dest="${PWD}"/"${1}"
+
+    if [ -z "${2}" ]; then
+        structFile="${HOME}/bin/data/add_metadata/iniFile.ini"
+    else
+        if [ -f "${2}" ]; then
+            echo 'Struct file ${2} activated'
+            structFile="${2}"
+        else
+            echo "Error : struct file ${2} not found or not a regular file" 1>&2
+            exit 2
+        fi
+    fi
+
+    # Création du répertoire temporaire
+    local tmp_dir=$(mktemp -d -t add-metadata-XXXXXXXX)
+
+    # Programmation de la destruction du répertoire temporaire
+    # en sortie du script
+    trap "rm -rf ${tmp_dir}" EXIT
+
+    # Décompression du fichier odt
+    unzip "${1}" -d "${tmp_dir}" > /dev/null 2>&1
+
+    local overwrite=0
+    if existsMeta "${tmp_dir}"; then
+        echo 'File .meta.ini exists :'
+        more "${tmp_dir}"/.meta.ini
+        read -r -p "Overwrite data ? [y/N] " response
+        response=${response,,}
+        if [[ "$response" =~ ^(yes|y)$ ]]; then
+            overwrite=1
+        else
+            overwrite=2
+        fi
+    fi
+
+    if [ "${overwrite}" -eq 0 -o "${overwrite}" -eq 1 ]; then
+        # Ajout du fichier .meta.ini
+        local meta_file="${tmp_dir}"/.meta.ini
+        createIni "${meta_file}" "${structFile}"
+
+        # Modification du fichier META-INF/manifest.xml
+        if [ "${overwrite}" -eq 0 ]; then
+            local line=' <manifest:file-entry manifest:full-path=".meta.ini" manifest:media-type="plain/text"/>'
+            sed -i "\$i ${line}" "${tmp_dir}"/META-INF/manifest.xml
+        fi
+
+        # Recompression du fichier odt et remplacement du fichier odt courant
+        cd "${tmp_dir}"
+        zip -r "${dest}" * . > /dev/null 2>&1
+    fi
+}
+
+
+if [ "${#}" -ge 1 -a "${#}" -le 2 ]; then
+    if [ -f "${1}" ]; then
+        if [ "${1##*.}" == 'odt' ]; then
+            addMetadata "${1}" "${2}"
+        else
+            echo 'Error : You MUST use a LibreOffice Writer file with .odt extension' 1>&2
+            exit 1
+        fi
+    else
+        echo "Error : File ${1} not found or not a regular file" 1>&2
+        exit 1
+    fi
+else
+    usage 'help'
+fi

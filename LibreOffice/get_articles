@@ -1,0 +1,77 @@
+#!/bin/bash
+
+set -eo pipefail
+
+readonly ODT_PATH="${HOME}/Documents"
+readonly TAG_NAME='pages'
+
+
+usage() {
+    if [ "${1}" == "help" ]; then
+        echo 'Usage: get_articles <pages>'
+        echo '       Affiche la liste des fichier LibreOffice Writer'
+        echo '       comportant des méta-données indiquant un nombre'
+        echo '       de pages estimées au maximum à <pages>.'
+        exit 0
+    fi
+}
+
+
+# Affichage des données
+# ${1} : chemin du fichier .meta.ini
+# ${2} : nom du fichier odt
+# ${3} : nombre de pages
+getPages() {
+    exec 5< "${1}"
+    while read <&5 line; do
+        local name=$(echo "${line}" | cut -d= -f1)
+        local value=$(echo "${line}" | cut -d= -f2)
+        if [ "${name}" == "${TAG_NAME}" ]; then
+            if [ ${value} -le ${3} ]; then
+                printf "%-10s %-50s\n" "${value}" "${2}"
+            fi
+        fi
+    done
+    exec 5<&-
+
+    rm "${1}"  > /dev/null 2>&1
+}
+
+
+# Récupération du nombre de pages de ${1}
+# ${1} : nom du fichier
+# ${2} : nom du répertoire temporaire
+# ${3} : nombre de pages
+getData() {
+    # Décompression du fichier odt
+    unzip -o "${1}" -d "${2}" > /dev/null 2>&1
+
+    if [ -f "${2}"/.meta.ini ]; then
+        getPages "${2}"/.meta.ini "${1}" "${3}"
+    fi
+}
+
+
+# Récupération des fichiers LibreOffice
+# ${1} : nombre de pages
+getArticles() {
+    # Création du répertoire temporaire
+    local tmp_dir=$(mktemp -d -t get-articles-XXXXXXXX)
+
+    # Programmation de la destruction du répertoire temporaire
+    # en sortie du script
+    trap "rm -rf ${tmp_dir}" EXIT
+
+    cd ${ODT_PATH}
+    while read -r filename
+    do
+        getData "${filename}" "${tmp_dir}" "${1}"
+    done < <(find . -name "*.odt")
+}
+
+
+if [ "${#}" -eq 1 ]; then
+    getArticles "${1}"
+else
+    usage 'help'
+fi
